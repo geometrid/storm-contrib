@@ -6,6 +6,7 @@ import backtype.storm.metric.api.MeanReducer;
 import backtype.storm.metric.api.ReducedMetric;
 import backtype.storm.task.TopologyContext;
 import backtype.storm.tuple.Fields;
+import backtype.storm.utils.Utils;
 import com.google.common.collect.ImmutableMap;
 
 import java.util.*;
@@ -79,6 +80,9 @@ public class OpaqueTridentKafkaSpout implements IOpaquePartitionedTridentSpout<M
         KafkaUtils.KafkaOffsetMetric _kafkaOffsetMetric;
         ReducedMetric _kafkaMeanFetchLatencyMetric;
         CombinedMetric _kafkaMaxFetchLatencyMetric;
+        long _firstFetchTime   = 0;
+        long _firstFetchOffset = 0;
+        long _firstFetchCount  = 0;
 
         public Emitter(Map conf, TopologyContext context) {
             _connections = new DynamicPartitionConnections(_config);
@@ -95,6 +99,28 @@ public class OpaqueTridentKafkaSpout implements IOpaquePartitionedTridentSpout<M
                 SimpleConsumer consumer = _connections.register(partition);
                 Map ret = KafkaUtils.emitPartitionBatchNew(_config, consumer, partition, collector, lastMeta, _topologyInstanceId, _topologyName, _kafkaMeanFetchLatencyMetric, _kafkaMaxFetchLatencyMetric);
                 _kafkaOffsetMetric.setLatestEmittedOffset(partition, (Long)ret.get("offset"));
+
+                if (LOG.isDebugEnabled()) {
+                  long lastOffset = ((lastMeta == null) ? 0 : (Long)lastMeta.get("offset"));
+                  long currOffset = ((ret      == null) ? 0 : (Long)ret.get("offset"));
+                  long nextOffset = ((ret      == null) ? 0 : (Long)ret.get("nextOffset"));
+                  long currCount  = ((lastMeta == null) ? 0 : (Long)ret.get("msgCount"));
+                  long nextCount  = ((ret      == null) ? 0 : (Long)ret.get("nextCount"));
+                  if (_firstFetchTime == 0) {
+                      _firstFetchTime   = System.currentTimeMillis();
+                      _firstFetchOffset = currOffset;
+                      _firstFetchCount  = currCount;
+                  }
+                  
+                  if ((currOffset != lastOffset) || (currOffset != nextOffset)) { // only when records this time or last
+                      long currFetchTime = System.currentTimeMillis();
+                      LOG.debug(Utils.logString("KafkaSpout", ""+attempt, "batch", "", "#"+hashCode(),
+                              "r", String.format("%6.1f %7d",          (1000.0 * (currCount - _firstFetchCount) / (1+currFetchTime - _firstFetchTime)), (1000 * (currOffset - _firstFetchOffset) / (1+currFetchTime - _firstFetchTime))),
+                              "#", String.format("%5d %8d %8d",        nextCount-currCount,   currCount, nextCount),
+                              "b", String.format("%8d %10d %10d %10d", nextOffset-currOffset, lastOffset, currOffset, nextOffset, (1000.0 * nextCount / (1+currFetchTime - _firstFetchTime)))
+                              ));
+                  }
+                }
                 return ret;
             } catch(FailedFetchException e) {
                 LOG.warn("Failed to fetch from partition " + partition);
@@ -104,6 +130,8 @@ public class OpaqueTridentKafkaSpout implements IOpaquePartitionedTridentSpout<M
                     Map ret = new HashMap();
                     ret.put("offset", lastMeta.get("nextOffset"));
                     ret.put("nextOffset", lastMeta.get("nextOffset"));
+                    ret.put("msgCount", lastMeta.get("msgCount"));
+                    ret.put("newCount", lastMeta.get("msgCount"));
                     ret.put("partition", partition.partition);
                     ret.put("broker", ImmutableMap.of("host", partition.host.host, "port", partition.host.port));
                     ret.put("topic", _config.topic);

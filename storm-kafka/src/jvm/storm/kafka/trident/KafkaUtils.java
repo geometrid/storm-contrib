@@ -52,6 +52,7 @@ public class KafkaUtils {
      public static Map emitPartitionBatchNew(TridentKafkaConfig config, SimpleConsumer consumer, GlobalPartitionId partition, TridentCollector collector, Map lastMeta, String topologyInstanceId, String topologyName,
                                                ReducedMetric meanMetric, CombinedMetric maxMetric) {
          long offset;
+         long msgCount;
          if(lastMeta!=null) {
              String lastInstanceId = null;
              Map lastTopoMeta = (Map) lastMeta.get("topology");
@@ -60,13 +61,16 @@ public class KafkaUtils {
              }
              if(config.forceFromStart && !topologyInstanceId.equals(lastInstanceId)) {
                  offset = consumer.getOffsetsBefore(config.topic, partition.partition, config.startOffsetTime, 1)[0];
+                 msgCount = 0L;
              } else {
-                 offset = (Long) lastMeta.get("nextOffset");
+                 offset   = (Long) lastMeta.get("nextOffset");
+                 msgCount = (Long) lastMeta.get("nextCount");
              }
          } else {
              long startTime = -1;
              if(config.forceFromStart) startTime = config.startOffsetTime;
              offset = consumer.getOffsetsBefore(config.topic, partition.partition, startTime, 1)[0];
+             msgCount = 0L;
          }
          ByteBufferMessageSet msgs;
          try {
@@ -84,13 +88,17 @@ public class KafkaUtils {
              }
          }
          long endoffset = offset;
+         long newCount  = 0;
          for(MessageAndOffset msg: msgs) {
              emit(config, collector, msg.message());
              endoffset = msg.offset();
+             newCount++;
          }
          Map newMeta = new HashMap();
          newMeta.put("offset", offset);
          newMeta.put("nextOffset", endoffset);
+         newMeta.put("msgCount", msgCount);
+         newMeta.put("nextCount", msgCount + newCount);
          newMeta.put("instanceId", topologyInstanceId);
          newMeta.put("partition", partition.partition);
          newMeta.put("broker", ImmutableMap.of("host", partition.host.host, "port", partition.host.port));
