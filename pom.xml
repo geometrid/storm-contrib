@@ -11,7 +11,7 @@
   <url>http://github.com/nathanmarz/storm-contrib</url>
 
   <properties>
-    <storm.version>0.9.0</storm.version>
+    <storm.version>0.9.0-wip21</storm.version>
   </properties>
   
   <dependencyManagement>
@@ -33,14 +33,20 @@
   </repositories>
 
   <modules>
-    <module>storm-jms</module>
-    <!-- <module>storm-clockspout</module> -->
+    <module>storm-kafka</module>
     <module>storm-hbase</module>
+    
+    <!-- *** work, don't want *** -->
+    <!-- <module>storm-jms</module> -->
+    <!-- <module>storm-signals</module> -->
+    <!-- <module>storm-rdbms</module> -->
+    <!-- <module>storm-sqs</module> -->
+
+    <!-- *** don't work, don't want *** -->
+    <!-- <module>storm-clockspout</module> -->
     <!-- <module>storm-mongo</module> -->
-    <module>storm-signals</module>
-    <module>storm-rdbms</module>
     <!-- <module>storm-cassandra</module> -->
     <!-- <module>storm-growl</module> -->
-    <module>storm-sqs</module>
+
   </modules>
 </project>
