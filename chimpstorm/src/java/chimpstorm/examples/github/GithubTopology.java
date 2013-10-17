@@ -33,7 +33,6 @@ import java.util.*;
 import java.io.IOException;
 
 import com.infochimps.wukong.state.WuEsState;
-//import org.elasticsearch.common.transport.InetSocketTransportAddress;
 
 public class GithubTopology {
   public static class ExtractLanguageCommits extends BaseFunction {
@@ -56,25 +55,6 @@ public class GithubTopology {
     }
   }
 
-  /* 
-  public static class Sum extends BaseAggregator<Accumulator> {
-    static class Accumulator {
-      long val = 0;
-    }
-
-    public Accumulator init(Object batchId, TridentCollector collector){
-      return new Accumulator();
-    }
-
-    public void aggregate(Accumulator acc, TridentTuple tuple, TridentCollector collector){
-      acc.val += tuple.getLong(0);
-    }
-
-    public void complete(Accumulator acc, TridentCollector collector){
-      collector.emit(new Values(acc.val));
-    }
-  }*/
-
   /*
    * Create and run the Github topology
    * The topology:
@@ -88,9 +68,6 @@ public class GithubTopology {
     IBlobStore bs = new FileBlobStore("/Users/eric/data/github/gz");
     OpaqueTransactionalBlobSpout spout = new OpaqueTransactionalBlobSpout(bs, StartPolicy.EARLIEST, null);
 
-    //WuEsState.Options esOptions = new WuEsState.Options();
-    //esOptions.clusterName = "elasticsearch_dlaw";
-
     TridentTopology topology = new TridentTopology();
     topology.newStream("github-activities", spout)
         .each(new Fields("line"), new JsonParse(), new Fields("parsed-json"))
@@ -99,26 +76,17 @@ public class GithubTopology {
         //.each(new Fields("language","commits"), new Tap());
         .groupBy(new Fields("language"))
         .persistentAggregate(new VisibleMemoryMapState.Factory(), new Fields("commits"), new Sum(), new Fields("commit-sum"))
-//        .persistentAggregate(
-//            new WuEsState.OpqFactory(Arrays.asList(new InetSocketTransportAddress("localhost", 9300)), esOptions),
-//            new Fields("commits"), new Sum(), new Fields("commit-sum")
-//         );
         .newValuesStream()
         .each(new Fields("language","commit-sum"), new Tap());
 
     Config conf = new Config();
     // Process one batch at a time, waiting 2 seconds between, and a 5 second batch timeout
-    //conf.setMaxSpoutPending(4);
+    // conf.setMaxSpoutPending(4);
     conf.setMessageTimeoutSecs(3);
-    //conf.put(Config.TOPOLOGY_TRIDENT_BATCH_EMIT_INTERVAL_MILLIS, 2000);
+    // conf.put(Config.TOPOLOGY_TRIDENT_BATCH_EMIT_INTERVAL_MILLIS, 2000);
     // conf.put(Config.TOPOLOGY_SLEEP_SPOUT_WAIT_STRATEGY_TIME_MS,  2000);
     System.out.println("Topology created");
-    //if (args.length == 0) {
         LocalCluster cluster = new LocalCluster();
         cluster.submitTopology("lang-counter", conf, topology.build());
-    //} else {
-    //    conf.setNumWorkers(3);
-    //   StormSubmitter.submitTopology(args[0], conf, topology.build());
-    //}
   }
 }
