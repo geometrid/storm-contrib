@@ -45,12 +45,12 @@ public class GithubTopology {
           node.get("repository").get("language") != null &&
           node.get("payload") != null &&
           node.get("payload").get("size") != null) {
-      List values = new ArrayList(2);
-      //grab the language and the action
-      values.add(node.get("repository").get("language").asText());
-      values.add(node.get("payload").get("size").asLong());
-      collector.emit(values);
-}
+        List values = new ArrayList(2);
+        //grab the language and the action
+        values.add(node.get("repository").get("language").asText());
+        values.add(node.get("payload").get("size").asLong());
+        collector.emit(values);
+      }
       return;
     }
   }
@@ -71,9 +71,9 @@ public class GithubTopology {
     TridentTopology topology = new TridentTopology();
     topology.newStream("github-activities", spout)
         .each(new Fields("line"), new JsonParse(), new Fields("parsed-json"))
-        //.each(new Fields("parsed-json"), new Tap());
+            //.each(new Fields("parsed-json"), new Tap());
         .each(new Fields("parsed-json"), new ExtractLanguageCommits(), new Fields("language", "commits"))
-        //.each(new Fields("language","commits"), new Tap());
+            //.each(new Fields("language","commits"), new Tap());
         .groupBy(new Fields("language"))
         .persistentAggregate(new VisibleMemoryMapState.Factory(), new Fields("commits"), new Sum(), new Fields("commit-sum"))
         .newValuesStream()
@@ -86,7 +86,7 @@ public class GithubTopology {
     // conf.put(Config.TOPOLOGY_TRIDENT_BATCH_EMIT_INTERVAL_MILLIS, 2000);
     // conf.put(Config.TOPOLOGY_SLEEP_SPOUT_WAIT_STRATEGY_TIME_MS,  2000);
     System.out.println("Topology created");
-        LocalCluster cluster = new LocalCluster();
-        cluster.submitTopology("lang-counter", conf, topology.build());
+    LocalCluster cluster = new LocalCluster();
+    cluster.submitTopology("lang-counter", conf, topology.build());
   }
 }
