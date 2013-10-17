@@ -1,5 +1,8 @@
 package com.infochimps.storm.trident.spout;
 
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -72,9 +75,13 @@ public class OpaqueTransactionalBlobSpout implements IOpaquePartitionedTridentSp
     private IBlobStore _blobStore;
     private IRecordizer _rec;
     String marker = null;
+    Long chunkOffset = null;
+    boolean fileDone = false;
     private boolean initialized = false;
     private StartPolicy _startPolicy;
     private String _offset;
+
+    public final int MAX_CHUNK_SIZE = 100000;
 
     public Emitter(Map conf, TopologyContext context, IBlobStore blobStore, IRecordizer rec, StartPolicy startPolicy, String offset) {
       _compId = context.getThisComponentId();
@@ -90,7 +97,7 @@ public class OpaqueTransactionalBlobSpout implements IOpaquePartitionedTridentSp
     @Override
     public Map emitPartitionBatch(TransactionAttempt tx, TridentCollector collector, SinglePartition partition, Map lastPartitionMeta) {
       String txId = "" + tx.getTransactionId();
-      LOG.debug(Utils.logString("emitPartitionBatch", _compId, txId, "START:", _blobStore.toString()));
+      LOG.info(Utils.logString("emitPartitionBatch", _compId, txId, "START:", _blobStore.toString()));
 
       boolean currentBatchFailed = false;
       boolean lastBatchFailed = false;
@@ -104,47 +111,28 @@ public class OpaqueTransactionalBlobSpout implements IOpaquePartitionedTridentSp
           switch (_startPolicy) {
             case EARLIEST:
               marker = _bs.getFirstMarker();
+              chunkOffset = 0L;
+              fileDone = false;
               isDataAvailable = marker != null ? true : false; // if marker is null then there are no files in the bucket + prefix yet.
               LOG.info(Utils.logString("emitPartitionBatch", _compId, txId, "INITIALIZATION: Starting from beginning", marker, _blobStore.toString()));
               break;
             case EXPLICIT:
-              marker = _offset;
-              if (!_blobStore.isMarkerValid(marker)) {
-                throw new RuntimeException(String.format("INITIALIZATION: Starting from offset. Inconsistent State. Offset [%s] is not valid. %s", marker, _blobStore.toString()));
-              }
-              LOG.info(Utils.logString("emitPartitionBatch", _compId, txId, "INITIALIZATION: Starting from offset.", _offset, _blobStore.toString()));
               break;
             case LATEST:
-              marker = _bs.getLastMarker();
-              // Nothing to read until next time.
-              isDataAvailable = false;
-              LOG.info(Utils.logString("emitPartitionBatch", _compId, txId, "INITIALIZATION: Starting at the end", marker, _blobStore.toString()));
               break;
-            default:
-              if (lastPartitionMeta != null) {
-                marker = (String) lastPartitionMeta.get("marker");
-                // Check for invalid state
-                if (!_blobStore.isMarkerValid(marker)) {
-                  throw new RuntimeException(String.format("INITIALIZATION: Resuming from offset. Inconsistent State found in Zookeeper. Zookeeper State [%s] is not valid. %s", marker, _blobStore.toString()));
-                }
-                LOG.info(Utils.logString("emitPartitionBatch", _compId, txId, "INITIALIZATION: Resuming from offset (from Zookeeper)", marker, _blobStore.toString()));
-                isDataAvailable = false; //read from the next marker.
-              } else {
-                // If no marker is found in ZK, use LATEST policy.
-                marker = _bs.getLastMarker();
-                LOG.warn(Utils.logString("emitPartitionBatch", _compId, txId, "INITIALIZATION: Can't resume. No state found in Zookeeper !!. Starting at the end", marker, _blobStore.toString()));
-                // Nothing to read until next time.
-                isDataAvailable = false;
-              }
           }
 
           // Download the actual file
           if (isDataAvailable) {
+            //TODO: refactor this code into a function
             Map<String, Object> context = new HashMap<String, Object>();
             context.put("txId", txId);
             context.put("compId", _compId);
             context.put("marker", marker);
-            _rec.recordize(_blobStore.getBlob(marker, context), collector, context);
+            context.put("chunkOffset", chunkOffset );
+            _rec.recordize( getChunk(marker, context,chunkOffset), collector, context);
+
+            fileDone = (Boolean) context.get("fileDone");
           }
 
           // Initialization successful. Don't run this block ever again.
@@ -157,16 +145,19 @@ public class OpaqueTransactionalBlobSpout implements IOpaquePartitionedTridentSp
 
           marker = (String) lastPartitionMeta.get("marker");
           lastBatchFailed = (Boolean) lastPartitionMeta.get("lastBatchFailed");
+          chunkOffset = (Long) lastPartitionMeta.get("chunkOffset");
+          boolean fileDone = (Boolean) lastPartitionMeta.get("fileDone");
 
 
           // Update the marker if the last batch succeeded.
-          if (!lastBatchFailed) {
+          if (!lastBatchFailed && fileDone ) {
+            chunkOffset = 0L;
             String tmp = _blobStore.getNextBlobMarker(marker);
             // marker stays same if no new files are available.
             marker = (tmp == null) ? marker : tmp;
             isDataAvailable = (tmp == null) ? false : true;
           }
-          LOG.debug(Utils.logString("emitPartitionBatch", _compId, txId, "curr", marker, "prev", prevMarker, _blobStore.toString()));
+          LOG.info(Utils.logString("emitPartitionBatch", _compId, txId, "curr", marker, "prev", prevMarker, _blobStore.toString()));
 
           // Download the actual file
           if (isDataAvailable) {
@@ -174,7 +165,10 @@ public class OpaqueTransactionalBlobSpout implements IOpaquePartitionedTridentSp
             context.put("txId", txId);
             context.put("compId", _compId);
             context.put("marker", marker);
-            _rec.recordize(_blobStore.getBlob(marker, context), collector, context);
+
+            context.put("chunkOffset", chunkOffset );
+            _rec.recordize( getChunk(marker, context, chunkOffset), collector, context);
+            fileDone = (Boolean) context.get("fileDone");
           }
         }
 
@@ -196,7 +190,30 @@ public class OpaqueTransactionalBlobSpout implements IOpaquePartitionedTridentSp
       Map newPartitionMeta = new HashMap();
       newPartitionMeta.put("marker", marker);
       newPartitionMeta.put("lastBatchFailed", currentBatchFailed);
+      newPartitionMeta.put("chunkOffset", chunkOffset );
+      newPartitionMeta.put("fileDone", fileDone );
       return newPartitionMeta;
+    }
+
+    private InputStream getChunk(String blobMarker, Map<String, Object> context, Long offset ) {
+      InputStream fileStream = _blobStore.getBlob(marker, context);
+
+      //TODO: create a member
+      byte[] buff = new byte[MAX_CHUNK_SIZE + 1];
+
+      try {
+        int bytesRead = fileStream.read( buff, chunkOffset.intValue(), MAX_CHUNK_SIZE );
+        chunkOffset += bytesRead;
+
+        context.put("fileDone", (bytesRead < MAX_CHUNK_SIZE ? true : false) );
+
+
+      } catch (IOException e) {
+        e.printStackTrace();  //To change body of catch statement use File | Settings | File Templates.
+      }
+
+
+      return new ByteArrayInputStream( buff );
     }
 
     @Override
