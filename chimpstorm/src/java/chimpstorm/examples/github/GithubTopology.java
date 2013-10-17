@@ -42,11 +42,16 @@ public class GithubTopology {
     public void execute(TridentTuple tuple, TridentCollector collector){
       JsonNode node = (JsonNode) tuple.getValue(0);
       if(!node.get("type").toString().equals("\"PushEvent\"")) return;
+      if (node.get("repository") != null &&
+          node.get("repository").get("language") != null &&
+          node.get("payload") != null &&
+          node.get("payload").get("size") != null) {
       List values = new ArrayList(2);
       //grab the language and the action
       values.add(node.get("repository").get("language").asText());
       values.add(node.get("payload").get("size").asLong());
       collector.emit(values);
+}
       return;
     }
   }
@@ -80,7 +85,7 @@ public class GithubTopology {
    * 5) ... TBD ...
    */
   public static void main(String[] args) throws Exception, InvalidTopologyException {
-    IBlobStore bs = new FileBlobStore("/Users/dlaw/dev/github-data/test-data");
+    IBlobStore bs = new FileBlobStore("/Users/eric/data/github/gz");
     OpaqueTransactionalBlobSpout spout = new OpaqueTransactionalBlobSpout(bs, StartPolicy.EARLIEST, null);
 
     //WuEsState.Options esOptions = new WuEsState.Options();
